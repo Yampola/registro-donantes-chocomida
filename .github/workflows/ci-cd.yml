@@ -1,0 +1,64 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Pruebas unitarias y cobertura
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar pruebas con cobertura (mínimo 80%)
+        run: pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+
+      - name: Subir reporte de cobertura como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  build-and-deploy:
+    name: Construir y desplegar en entorno de prueba
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Definir nombre de imagen en minúsculas
+        run: echo "IMAGE_NAME=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Construir imagen Docker
+        run: docker build -t "$IMAGE_NAME:${{ github.sha }}" .
+
+      - name: Desplegar en entorno de prueba efímero y verificar salud
+        run: |
+          docker run -d --name donor-api-test -p 8000:8000 "$IMAGE_NAME:${{ github.sha }}"
+          sleep 5
+          curl --fail http://localhost:8000/health
+          docker stop donor-api-test
+
+      - name: Iniciar sesión en GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Publicar imagen en GHCR
+        run: |
+          docker tag "$IMAGE_NAME:${{ github.sha }}" "ghcr.io/$IMAGE_NAME:latest"
+          docker push "ghcr.io/$IMAGE_NAME:latest"
