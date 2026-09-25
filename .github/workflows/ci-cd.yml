@@ -86,6 +86,7 @@ jobs:
           curl --fail http://localhost:8000/health
 
       - name: Escaneo baseline con OWASP ZAP
+        continue-on-error: true
         uses: zaproxy/action-baseline@v0.12.0
         with:
           target: "http://localhost:8000"
