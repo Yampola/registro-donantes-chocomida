@@ -62,3 +62,69 @@ jobs:
         run: |
           docker tag "$IMAGE_NAME:${{ github.sha }}" "ghcr.io/$IMAGE_NAME:latest"
           docker push "ghcr.io/$IMAGE_NAME:latest"
+
+  security-scan:
+    name: Escaneo de seguridad (OWASP ZAP)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Levantar la API en segundo plano
+        run: |
+          nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > api.log 2>&1 &
+          sleep 5
+          curl --fail http://localhost:8000/health
+
+      - name: Escaneo baseline con OWASP ZAP
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: "http://localhost:8000"
+          cmd_options: "-a"
+          fail_action: false
+          allow_issue_writing: false
+
+      - name: Subir reportes de ZAP
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: |
+            report_html.html
+            report_md.md
+            report_json.json
+          if-no-files-found: warn
+
+  code-quality:
+    name: Análisis de calidad de código (SonarQube/SonarCloud)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias y generar cobertura para SonarQube
+        run: |
+          pip install -r requirements.txt
+          pytest --cov=app --cov-report=xml
+
+      - name: Análisis con SonarQube/SonarCloud
+        uses: sonarsource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
